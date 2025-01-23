@@ -9,7 +9,7 @@ def create_model():
         AbstractModel: The Pyomo abstract model for optimization.
     """
     model = pyomo_base_model()
-    model.build_model()
+    model.build_base_model()
     return model
 
 class pyomo_base_model(pyo.AbstractModel):
