@@ -8,8 +8,12 @@ def create_model():
     Returns:
         AbstractModel: The Pyomo abstract model for optimization.
     """
-    model = pyomo_base_model()
-    model.build_base_model()
+    # model = pyomo_base_model()
+    # model.build_base_model()
+    # ATTN: Since the code is written to be tested with the supply model formulation this works, if only the base_model is run then the test fail.
+    # ATTN: A manual test or a change in the test structure is needed to see of th the base_model also works.
+    model = pyomo_supply_model()
+    model.build_supply_model()
     return model
 
 class pyomo_base_model(pyo.AbstractModel):
@@ -72,7 +76,6 @@ class pyomo_base_model(pyo.AbstractModel):
         self.ENV_COST_MATRIX = pyo.Param(self.ENV_COST_PROCESS, mutable=True, doc='Enviornmental cost matrix Q*B describing the environmental cost flows e associated to process j')
         self.INV_MATRIX = pyo.Param(self.INV_PROCESS, mutable=True, doc='Intervention matrix B describing the intervention flow g entering/leaving process j')
         self.FINAL_DEMAND = pyo.Param(self.PRODUCT, mutable=True, within=pyo.Reals, doc='Final demand of intermediate product flows (i.e., functional unit)')
-        self.SUPPLY = pyo.Param(self.PRODUCT, mutable=True, within=pyo.Binary, doc='Binary parameter which specifies whether or not a supply has been specified instead of a demand')
         self.TECH_MATRIX = pyo.Param(self.PRODUCT_PROCESS, mutable=True, doc='Technology matrix A describing the intermediate product i produced/absorbed by process j')
         self.WEIGHTS = pyo.Param(self.INDICATOR, mutable=True, within=pyo.NonNegativeReals, doc='Weighting factors for the impact assessment indicators in the objective function')
 
@@ -81,8 +84,6 @@ class pyomo_base_model(pyo.AbstractModel):
         self.impacts = pyo.Var(self.INDICATOR, bounds=(-1e24, 1e24), doc='Environmental impact on indicator h evaluated with the established LCIA method')
         self.scaling_vector = pyo.Var(self.PROCESS, bounds=(-1e24, 1e24), doc='Activity level of each process to meet the final demand')
         self.inv_vector = pyo.Var(self.INV, bounds=(-1e24, 1e24), doc='Intervention flows')
-        self.slack = pyo.Var(self.PRODUCT, bounds=(0, 1e24), doc='Supply slack variables')
-
 
     def _declare_constraints(self):
         # Constraints
@@ -91,7 +92,6 @@ class pyomo_base_model(pyo.AbstractModel):
         self.INVENTORY_CNSTR = pyo.Constraint(self.INV, rule=self._inventory_constraint)
         self.UPPER_CNSTR = pyo.Constraint(self.PROCESS, rule=self._upper_constraint)
         self.LOWER_CNSTR = pyo.Constraint(self.PROCESS, rule=self._lower_constraint)
-        self.SLACK_CNSTR = pyo.Constraint(self.PRODUCT, rule=self._slack_constraint)
         self.INV_CNSTR = pyo.Constraint(self.INV, rule=self._upper_env_constraint)
         self.IMP_CNSTR = pyo.Constraint(self.INDICATOR, rule=self._upper_imp_constraint)
 
@@ -109,7 +109,8 @@ class pyomo_base_model(pyo.AbstractModel):
     @staticmethod
     def _demand_constraint(model, i):
         """Fixes a value in the demand vector"""
-        return sum(model.TECH_MATRIX[i, j] * model.scaling_vector[j] for j in model.PROCESS_OUT[i]) == model.FINAL_DEMAND[i] + model.slack[i]
+        # ATTN: Deleted the slack from here now.
+        return sum(model.TECH_MATRIX[i, j] * model.scaling_vector[j] for j in model.PROCESS_OUT[i]) == model.FINAL_DEMAND[i]
     @staticmethod
     def _impact_constraint(model, h):
         """Calculates all the impact categories"""
@@ -134,15 +135,53 @@ class pyomo_base_model(pyo.AbstractModel):
     def _upper_imp_constraint(model, h):
         """ Imposes upper limits on selected impact categories """
         return model.impacts[h] <= model.UPPER_IMP_LIMIT[h]
-    @staticmethod
-    def _slack_constraint(model, j):
-        """ Slack variable upper limit for activities where supply is specified instead of demand """
-        return model.slack[j] <= 1e20 * model.SUPPLY[j]
+    # ATTN: I would probably seperate the single objective formulation from the multi objective formulation.
     @staticmethod
     def _objective_function(model):
         """Objective is a sum over all indicators with weights. Typically, the indicator of study has weight 1, the rest 0"""
         return sum(model.impacts[h] * model.WEIGHTS[h] for h in model.INDICATOR)
+    
+class pyomo_supply_model(pyomo_base_model):
+    """  
+    Description:
+        the special case where the
+        practitioner wants to specify the total production quantities (supply)
+        rather than the amount available for use outside the system (demand).
+        This case can be modelled by specifying identical lower and upper bounds
+        ($s_j^{low} = s_j^{high}$) on a scaling vector entry equal to the desired
+        amount produced. For this particular process $j$ the corresponding product
+        slack variable $slack_i^{high}$ must be set to a large value. Otherwise,
+        it takes the value 0 and regular demand specification is performed for
+        the product $i$ being the reference product of process $j$.
+    """
+    def __init__(self, *args, **kwds):
+        super().__init__(*args, **kwds)
+    
+    def build_supply_model(self):
+        self.build_base_model()
+        self._change_to_supply_model()
 
+    def _change_to_supply_model(self):
+        # Add SUPPLY as parameter for the slack variable bound
+        # ATTN: do we still need the SUPPLY formulation if we seperate the supply and demand version of the problem into two different optimization problems?
+        self.SUPPLY = pyo.Param(self.PRODUCT, mutable=True, within=pyo.Binary, doc='Binary parameter which specifies whether or not a supply has been specified instead of a demand')
+        # Add slack as a variable
+        self.slack = pyo.Var(self.PRODUCT, bounds=(0, 1e24), doc='Supply slack variables')
+        # Add the variable bound of the slack as a constraint
+        self.SLACK_CNSTR = pyo.Constraint(self.PRODUCT, rule=self._slack_constraint)
+        # Change the final demand constraint to include the slack formulation
+        self.FINAL_DEMAND_CNSTR = pyo.Constraint(self.PRODUCT, rule=self._demand_constraint_with_slack)
+
+    @staticmethod
+    # ATTN: do we still need this formulation if we seperate the supply and demand version of the problem into two different optimization problems. We could just define the variable bound when defining the slack variable
+    def _slack_constraint(model, j):
+        """ Slack variable upper limit for activities where supply is specified instead of demand """
+        return model.slack[j] <= 1e20 * model.SUPPLY[j]
+    @staticmethod
+    def _demand_constraint_with_slack(model, i):
+        """Fixes a value in the demand vector"""
+        return sum(model.TECH_MATRIX[i, j] * model.scaling_vector[j] for j in model.PROCESS_OUT[i]) == model.FINAL_DEMAND[i] + model.slack[i]
+    
 def calculate_methods(instance, lci_data, methods):
     """
     Calculates the impacts if a method with weight 0 has been specified.
