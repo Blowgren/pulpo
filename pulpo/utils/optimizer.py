@@ -8,123 +8,140 @@ def create_model():
     Returns:
         AbstractModel: The Pyomo abstract model for optimization.
     """
-    model = pyo.AbstractModel()
-
-    # Sets
-    model.PRODUCT = pyo.Set(doc='Set of intermediate products (or technosphere exchanges), indexed by i')
-    model.PROCESS = pyo.Set(doc='Set of processes (or activities), indexed by j')
-    model.ENV_COST = pyo.Set(doc='Set of environmental cost flows, indexed by e')
-    model.INDICATOR = pyo.Set(doc='Set of impact assessment indicators, indexed by h')
-    model.INV = pyo.Set(doc='Set of intervention flows, indexed by g')
-    model.ENV_COST_PROCESS = pyo.Set(within=model.ENV_COST * model.PROCESS * model.INDICATOR, doc='Relation set between environmental cost flows and processes')
-    model.ENV_COST_IN = pyo.Set(model.INDICATOR, within=model.ENV_COST)
-    model.ENV_COST_OUT = pyo.Set(model.ENV_COST * model.INDICATOR, within=model.PROCESS)
-    model.PROCESS_IN = pyo.Set(model.PROCESS, within=model.PRODUCT)
-    model.PROCESS_OUT = pyo.Set(model.PRODUCT, within=model.PROCESS)
-    model.PRODUCT_PROCESS = pyo.Set(within=model.PRODUCT * model.PROCESS, doc='Relation set between intermediate products and processes')
-    model.INV_PROCESS = pyo.Set(within=model.INV * model.PROCESS, doc='Relation set between environmental flows and processes')
-    model.INV_OUT = pyo.Set(model.INV, within=model.PROCESS)
-
-    # Parameters
-    model.UPPER_LIMIT = pyo.Param(model.PROCESS, mutable=True, within=pyo.Reals, doc='Maximum production capacity of process j')
-    model.LOWER_LIMIT = pyo.Param(model.PROCESS, mutable=True, within=pyo.Reals, doc='Minimum production capacity of process j')
-    model.UPPER_INV_LIMIT = pyo.Param(model.INV, mutable=True, within=pyo.Reals, doc='Maximum intervention flow g')
-    model.UPPER_IMP_LIMIT = pyo.Param(model.INDICATOR, mutable=True, within=pyo.Reals, doc='Maximum impact on category h')
-    model.ENV_COST_MATRIX = pyo.Param(model.ENV_COST_PROCESS, mutable=True, doc='Enviornmental cost matrix Q*B describing the environmental cost flows e associated to process j')
-    model.INV_MATRIX = pyo.Param(model.INV_PROCESS, mutable=True, doc='Intervention matrix B describing the intervention flow g entering/leaving process j')
-    model.FINAL_DEMAND = pyo.Param(model.PRODUCT, mutable=True, within=pyo.Reals, doc='Final demand of intermediate product flows (i.e., functional unit)')
-    model.SUPPLY = pyo.Param(model.PRODUCT, mutable=True, within=pyo.Binary, doc='Binary parameter which specifies whether or not a supply has been specified instead of a demand')
-    model.TECH_MATRIX = pyo.Param(model.PRODUCT_PROCESS, mutable=True, doc='Technology matrix A describing the intermediate product i produced/absorbed by process j')
-    model.WEIGHTS = pyo.Param(model.INDICATOR, mutable=True, within=pyo.NonNegativeReals, doc='Weighting factors for the impact assessment indicators in the objective function')
-
-    # Variables
-    model.impacts = pyo.Var(model.INDICATOR, bounds=(-1e24, 1e24), doc='Environmental impact on indicator h evaluated with the established LCIA method')
-    model.scaling_vector = pyo.Var(model.PROCESS, bounds=(-1e24, 1e24), doc='Activity level of each process to meet the final demand')
-    model.inv_vector = pyo.Var(model.INV, bounds=(-1e24, 1e24), doc='Intervention flows')
-    model.slack = pyo.Var(model.PRODUCT, bounds=(-1e24, 1e24), doc='Supply slack variables')
-
-    # Building rules for sets
-    model.Env_in_out = pyo.BuildAction(rule=populate_env)
-    model.Process_in_out = pyo.BuildAction(rule=populate_in_and_out)
-    model.Inv_in_out = pyo.BuildAction(rule=populate_inv)
-
-    # Constraints
-    model.FINAL_DEMAND_CNSTR = pyo.Constraint(model.PRODUCT, rule=demand_constraint)
-    model.IMPACTS_CNSTR = pyo.Constraint(model.INDICATOR, rule=impact_constraint)
-    model.INVENTORY_CNSTR = pyo.Constraint(model.INV, rule=inventory_constraint)
-    model.UPPER_CNSTR = pyo.Constraint(model.PROCESS, rule=upper_constraint)
-    model.LOWER_CNSTR = pyo.Constraint(model.PROCESS, rule=lower_constraint)
-    model.SLACK_UPPER_CNSTR = pyo.Constraint(model.PRODUCT, rule=slack_upper_constraint)
-    model.SLACK_LOWER_CNSTR = pyo.Constraint(model.PRODUCT, rule=slack_lower_constraint)
-    model.INV_CNSTR = pyo.Constraint(model.INV, rule=upper_env_constraint)
-    model.IMP_CNSTR = pyo.Constraint(model.INDICATOR, rule=upper_imp_constraint)
-
-    # Objective function
-    model.OBJ = pyo.Objective(sense=pyo.minimize, rule=objective_function)
-
+    model = pyomo_base_model()
+    model.build_model()
     return model
 
+class pyomo_base_model(pyo.AbstractModel):
 
-# Rule functions
-def populate_env(model):
-    """Relates the environmental flows to the processes."""
-    for i, j, h in model.ENV_COST_PROCESS:
-        if i not in model.ENV_COST_IN[h]:
-            model.ENV_COST_IN[h].add(i)
-        model.ENV_COST_OUT[i, h].add(j)
+    def __init__(self, *args, **kwds):
+        super().__init__(*args, **kwds)
+
+    def _declare_sets(self):
+        # Sets
+        self.PRODUCT = pyo.Set(doc='Set of intermediate products (or technosphere exchanges), indexed by i')
+        self.PROCESS = pyo.Set(doc='Set of processes (or activities), indexed by j')
+        self.ENV_COST = pyo.Set(doc='Set of environmental cost flows, indexed by e')
+        self.INDICATOR = pyo.Set(doc='Set of impact assessment indicators, indexed by h')
+        self.INV = pyo.Set(doc='Set of intervention flows, indexed by g')
+        self.ENV_COST_PROCESS = pyo.Set(within=self.ENV_COST * self.PROCESS * self.INDICATOR, doc='Relation set between environmental cost flows and processes')
+        self.ENV_COST_IN = pyo.Set(self.INDICATOR, within=self.ENV_COST)
+        self.ENV_COST_OUT = pyo.Set(self.ENV_COST * self.INDICATOR, within=self.PROCESS)
+        self.PROCESS_IN = pyo.Set(self.PROCESS, within=self.PRODUCT)
+        self.PROCESS_OUT = pyo.Set(self.PRODUCT, within=self.PROCESS)
+        self.PRODUCT_PROCESS = pyo.Set(within=self.PRODUCT * self.PROCESS, doc='Relation set between intermediate products and processes')
+        self.INV_PROCESS = pyo.Set(within=self.INV * self.PROCESS, doc='Relation set between environmental flows and processes')
+        self.INV_OUT = pyo.Set(self.INV, within=self.PROCESS)
+        # Building rules for sets
+        # ATTN: I don't like the BuildAction approach coded like this, because 
+        #       1. why are we introducing "Env_in_out" and other variables? 
+        #       2. why is the constrcutor method seperated, creates ambigious code snippets.
+        #       3. It is not clear what changes in the model, I guess its just that the sets are populated?
+        #       4. Why does this not happen in the set definitions, e.g., using the filter arguemnt?
+        self.Env_in_out = pyo.BuildAction(rule=self._populate_env)
+        self.Process_in_out = pyo.BuildAction(rule=self._populate_in_and_out)
+        self.Inv_in_out = pyo.BuildAction(rule=self._populate_inv)
+
+    # Rule functions
+    # ATTN: I have not worked with pyo.BuildAction, hence I dont know if these methods can be static methods.
+    @staticmethod
+    def _populate_env(model):
+        """Relates the environmental flows to the processes."""
+        for i, j, h in model.ENV_COST_PROCESS:
+            if i not in model.ENV_COST_IN[h]:
+                model.ENV_COST_IN[h].add(i)
+            model.ENV_COST_OUT[i, h].add(j)
+    @staticmethod
+    def _populate_in_and_out(model):
+        """Relates the inputs of an activity to its outputs."""
+        for i, j in model.PRODUCT_PROCESS:
+            model.PROCESS_OUT[i].add(j)
+            model.PROCESS_IN[j].add(i)
+    @staticmethod
+    def _populate_inv(model):
+        """Relates the impacts to the environmental flows"""
+        for a, j in model.INV_PROCESS:
+            model.INV_OUT[a].add(j)
+
+    def _declare_parameters(self):
+        # Parameters
+        self.UPPER_LIMIT = pyo.Param(self.PROCESS, mutable=True, within=pyo.Reals, doc='Maximum production capacity of process j')
+        self.LOWER_LIMIT = pyo.Param(self.PROCESS, mutable=True, within=pyo.Reals, doc='Minimum production capacity of process j')
+        self.UPPER_INV_LIMIT = pyo.Param(self.INV, mutable=True, within=pyo.Reals, doc='Maximum intervention flow g')
+        self.UPPER_IMP_LIMIT = pyo.Param(self.INDICATOR, mutable=True, within=pyo.Reals, doc='Maximum impact on category h')
+        self.ENV_COST_MATRIX = pyo.Param(self.ENV_COST_PROCESS, mutable=True, doc='Enviornmental cost matrix Q*B describing the environmental cost flows e associated to process j')
+        self.INV_MATRIX = pyo.Param(self.INV_PROCESS, mutable=True, doc='Intervention matrix B describing the intervention flow g entering/leaving process j')
+        self.FINAL_DEMAND = pyo.Param(self.PRODUCT, mutable=True, within=pyo.Reals, doc='Final demand of intermediate product flows (i.e., functional unit)')
+        self.SUPPLY = pyo.Param(self.PRODUCT, mutable=True, within=pyo.Binary, doc='Binary parameter which specifies whether or not a supply has been specified instead of a demand')
+        self.TECH_MATRIX = pyo.Param(self.PRODUCT_PROCESS, mutable=True, doc='Technology matrix A describing the intermediate product i produced/absorbed by process j')
+        self.WEIGHTS = pyo.Param(self.INDICATOR, mutable=True, within=pyo.NonNegativeReals, doc='Weighting factors for the impact assessment indicators in the objective function')
+
+    def _declare_variables(self):
+        # Variables
+        self.impacts = pyo.Var(self.INDICATOR, bounds=(-1e24, 1e24), doc='Environmental impact on indicator h evaluated with the established LCIA method')
+        self.scaling_vector = pyo.Var(self.PROCESS, bounds=(-1e24, 1e24), doc='Activity level of each process to meet the final demand')
+        self.inv_vector = pyo.Var(self.INV, bounds=(-1e24, 1e24), doc='Intervention flows')
+        self.slack = pyo.Var(self.PRODUCT, bounds=(0, 1e24), doc='Supply slack variables')
 
 
-def populate_in_and_out(model):
-    """Relates the inputs of an activity to its outputs."""
-    for i, j in model.PRODUCT_PROCESS:
-        model.PROCESS_OUT[i].add(j)
-        model.PROCESS_IN[j].add(i)
+    def _declare_constraints(self):
+        # Constraints
+        self.FINAL_DEMAND_CNSTR = pyo.Constraint(self.PRODUCT, rule=self._demand_constraint)
+        self.IMPACTS_CNSTR = pyo.Constraint(self.INDICATOR, rule=self._impact_constraint)
+        self.INVENTORY_CNSTR = pyo.Constraint(self.INV, rule=self._inventory_constraint)
+        self.UPPER_CNSTR = pyo.Constraint(self.PROCESS, rule=self._upper_constraint)
+        self.LOWER_CNSTR = pyo.Constraint(self.PROCESS, rule=self._lower_constraint)
+        self.SLACK_CNSTR = pyo.Constraint(self.PRODUCT, rule=self._slack_constraint)
+        self.INV_CNSTR = pyo.Constraint(self.INV, rule=self._upper_env_constraint)
+        self.IMP_CNSTR = pyo.Constraint(self.INDICATOR, rule=self._upper_imp_constraint)
 
-def populate_inv(model):
-    """Relates the impacts to the environmental flows"""
-    for a, j in model.INV_PROCESS:
-        model.INV_OUT[a].add(j)
+    def _declare_objectives(self):
+        # Objective function
+        self.OBJ = pyo.Objective(sense=pyo.minimize, rule=self._objective_function)
 
-def demand_constraint(model, i):
-    """Fixes a value in the demand vector"""
-    return sum(model.TECH_MATRIX[i, j] * model.scaling_vector[j] for j in model.PROCESS_OUT[i]) == model.FINAL_DEMAND[i] + model.slack[i]
+    def build_base_model(self):
+        self._declare_sets()
+        self._declare_parameters()
+        self._declare_variables()
+        self._declare_constraints()
+        self._declare_objectives()
 
-def impact_constraint(model, h):
-    """Calculates all the impact categories"""
-    return model.impacts[h] == sum(sum(model.ENV_COST_MATRIX[i, j, h] * model.scaling_vector[j] for j in model.ENV_COST_OUT[i, h]) for i in model.ENV_COST_IN[h])
-
-def inventory_constraint(model, g):
-    """Calculates the environmental flows"""
-    return model.inv_vector[g] == sum(model.INV_MATRIX[g, j] * model.scaling_vector[j] for j in model.INV_OUT[g])
-
-def upper_constraint(model, j):
-    """Ensures that variables are within capacities (Maximum production constraint) """
-    return model.scaling_vector[j] <= model.UPPER_LIMIT[j]
-
-def lower_constraint(model, j):
-    """ Minimum production constraint """
-    return model.scaling_vector[j] >= model.LOWER_LIMIT[j]
-
-def upper_env_constraint(model, g):
-    """Ensures that variables are within capacities (Maximum production constraint) """
-    return model.inv_vector[g] <= model.UPPER_INV_LIMIT[g]
-
-def upper_imp_constraint(model, h):
-    """ Imposes upper limits on selected impact categories """
-    return model.impacts[h] <= model.UPPER_IMP_LIMIT[h]
-
-
-def slack_upper_constraint(model, j):
-    """ Slack variable upper limit for activities where supply is specified instead of demand """
-    return model.slack[j] <= 1e20 * model.SUPPLY[j]
-
-def slack_lower_constraint(model, j):
-    """ Slack variable upper limit for activities where supply is specified instead of demand """
-    return model.slack[j] >= -1e20 * model.SUPPLY[j]
-
-def objective_function(model):
-    """Objective is a sum over all indicators with weights. Typically, the indicator of study has weight 1, the rest 0"""
-    return sum(model.impacts[h] * model.WEIGHTS[h] for h in model.INDICATOR)
+    @staticmethod
+    def _demand_constraint(model, i):
+        """Fixes a value in the demand vector"""
+        return sum(model.TECH_MATRIX[i, j] * model.scaling_vector[j] for j in model.PROCESS_OUT[i]) == model.FINAL_DEMAND[i] + model.slack[i]
+    @staticmethod
+    def _impact_constraint(model, h):
+        """Calculates all the impact categories"""
+        return model.impacts[h] == sum(sum(model.ENV_COST_MATRIX[i, j, h] * model.scaling_vector[j] for j in model.ENV_COST_OUT[i, h]) for i in model.ENV_COST_IN[h])
+    @staticmethod
+    def _inventory_constraint(model, g):
+        """Calculates the environmental flows"""
+        return model.inv_vector[g] == sum(model.INV_MATRIX[g, j] * model.scaling_vector[j] for j in model.INV_OUT[g])
+    @staticmethod
+    def _upper_constraint(model, j):
+        """Ensures that variables are within capacities (Maximum production constraint) """
+        return model.scaling_vector[j] <= model.UPPER_LIMIT[j]
+    @staticmethod
+    def _lower_constraint(model, j):
+        """ Minimum production constraint """
+        return model.scaling_vector[j] >= model.LOWER_LIMIT[j]
+    @staticmethod
+    def _upper_env_constraint(model, g):
+        """Ensures that variables are within capacities (Maximum production constraint) """
+        return model.inv_vector[g] <= model.UPPER_INV_LIMIT[g]
+    @staticmethod
+    def _upper_imp_constraint(model, h):
+        """ Imposes upper limits on selected impact categories """
+        return model.impacts[h] <= model.UPPER_IMP_LIMIT[h]
+    @staticmethod
+    def _slack_constraint(model, j):
+        """ Slack variable upper limit for activities where supply is specified instead of demand """
+        return model.slack[j] <= 1e20 * model.SUPPLY[j]
+    @staticmethod
+    def _objective_function(model):
+        """Objective is a sum over all indicators with weights. Typically, the indicator of study has weight 1, the rest 0"""
+        return sum(model.impacts[h] * model.WEIGHTS[h] for h in model.INDICATOR)
 
 def calculate_methods(instance, lci_data, methods):
     """
@@ -181,15 +198,7 @@ def calculate_inv_flows(instance, lci_data):
     except:
         scaling_vector = np.array([instance.scaling_vector[x] for x in instance.scaling_vector])
     flows = intervention_matrix.dot(scaling_vector)
-    # Check if inv_flows already exists in the model
-    # @TODO: Consider adding "inv_flows" directly as variable to the model and skip this check.
-    if hasattr(instance, 'inv_flows'):
-        # Update the values of the existing variable
-        for i in range(intervention_matrix.shape[0]):
-            instance.inv_flows[i].value = flows[i]
-    else:
-        # Create the variable if it does not exist
-        instance.inv_flows = pyo.Var(range(0, intervention_matrix.shape[0]), initialize=dict(enumerate(flows)))
+    instance.inv_flows = pyo.Var(range(0, intervention_matrix.shape[0]), initialize=flows)
     return instance
 
 
