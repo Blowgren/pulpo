@@ -1,7 +1,7 @@
 import scipy.sparse as sparse
 
 
-def combine_inputs(lci_data, demand, choices, upper_limit, lower_limit, upper_inv_limit, upper_imp_limit, methods):
+def combine_inputs(lci_data, demand, choices, upper_limit, lower_limit, upper_intervention_limit, upper_imp_limit, methods):
     """
     Combines all the inputs into a dictionary as an input for the optimization model.
 
@@ -11,7 +11,7 @@ def combine_inputs(lci_data, demand, choices, upper_limit, lower_limit, upper_in
         choices (dict): Choices for the model.
         upper_limit (dict): Upper limit constraints.
         lower_limit (dict): Lower limit constraints.
-        upper_inv_limit (dict): Upper intervention limit constraints.
+        upper_intervention_limit (dict): Upper intervention limit constraints.
         upper_imp_limit (dict): Upper impact limit constraints.
         methods (dict): Methods for environmental impact assessment.
 
@@ -30,12 +30,12 @@ def combine_inputs(lci_data, demand, choices, upper_limit, lower_limit, upper_in
     matrices = {h: matrices[h] for h in matrices if str(h) in methods}
 
     # Prepare the environmental impact matrices Q[h]*B
-    env_cost = {h: sparse.csr_matrix.dot(matrices[h], intervention_matrix) for h in matrices}
+    intervention = {h: sparse.csr_matrix.dot(matrices[h], intervention_matrix) for h in matrices}
 
     # Convert sparse csr biosphere impact matrix to dictionary
-    env_cost_dict = {(i - 1, env_cost[h].indices[j], h): env_cost[h].data[j]
+    intervention_dict = {(i - 1, intervention[h].indices[j], h): intervention[h].data[j]
                      for h in matrices for i in range(1, intervention_matrix.shape[0] + 1)
-                     for j in range(env_cost[h].indptr[i - 1], env_cost[h].indptr[i])}
+                     for j in range(intervention[h].indptr[i - 1], intervention[h].indptr[i])}
 
     # Convert sparse csr technology matrix to dictionary
     technology_matrix_dict = {(i - 1, technology_matrix.indices[j]): technology_matrix.data[j]
@@ -43,9 +43,9 @@ def combine_inputs(lci_data, demand, choices, upper_limit, lower_limit, upper_in
                               for j in range(technology_matrix.indptr[i - 1], technology_matrix.indptr[i])}
 
     # Convert sparse csr intervention flow matrix to dictionary
-    inv_to_consider = [intervention_map[g] for g in upper_inv_limit]
-    inv_dict = {(g, intervention_matrix.indices[j]): intervention_matrix.data[j]
-                for g in inv_to_consider
+    interventions_to_consider = [intervention_map[g] for g in upper_intervention_limit]
+    intervention_limit_dict = {(g, intervention_matrix.indices[j]): intervention_matrix.data[j]
+                for g in interventions_to_consider
                 for j in range(intervention_matrix.indptr[g], intervention_matrix.indptr[g + 1])}
 
     # Make technology matrix rectangular and update keys and product_ids
@@ -69,10 +69,10 @@ def combine_inputs(lci_data, demand, choices, upper_limit, lower_limit, upper_in
     PRODUCTS = {None: list({i[0] for i in technology_matrix_dict})}
     PROCESS = {None: list({i[1] for i in technology_matrix_dict})}
     PRODUCT_PROCESS = {None: list({(i[0], i[1]) for i in technology_matrix_dict})}
-    ENV_COST = {None: list({i[0] for i in env_cost_dict})}
-    ENV_COST_PROCESS = {None: list({i for i in env_cost_dict})}
-    INV = {None: list({i[0] for i in inv_dict})}
-    INV_PROCESS = {None: list({(i[0], i[1]) for i in inv_dict})}
+    INTERVENTION = {None: list({i[0] for i in intervention_dict})}
+    INTERVENTION_PROCESS = {None: list({i for i in intervention_dict})}
+    INTERVENTION_LIMIT = {None: list({i[0] for i in intervention_limit_dict})}
+    INTERVENTION_LIMIT_PROCESS = {None: list({(i[0], i[1]) for i in intervention_limit_dict})}
     INDICATOR = {None: list({h for h in matrices})}
 
     # Specify the demand
@@ -110,9 +110,9 @@ def combine_inputs(lci_data, demand, choices, upper_limit, lower_limit, upper_in
         supply_dict[process_map[proc]] = 1 if lower_limit[proc] == upper_limit[proc] else 0
 
     # Specify the upper elementary flow limit
-    upper_inv_limit_dict = {elem: 1e24 for elem in INV[None]}
-    for inv in upper_inv_limit:
-        upper_inv_limit_dict[intervention_map[inv.key]] = upper_inv_limit[inv]
+    upper_intervention_limit_dict = {elem: 1e24 for elem in INTERVENTION[None]}
+    for intervention_limit in upper_intervention_limit:
+        upper_intervention_limit_dict[intervention_map[intervention_limit.key]] = upper_intervention_limit[intervention_limit]
 
     # Specify the upper impact category limit
     upper_imp_limit_dict = {imp: 1e24 for imp in INDICATOR[None]}
@@ -127,20 +127,20 @@ def combine_inputs(lci_data, demand, choices, upper_limit, lower_limit, upper_in
         None: {
             'PRODUCT': PRODUCTS,
             'PROCESS': PROCESS,
-            'ENV_COST': ENV_COST,
+            'INTERVENTION': INTERVENTION,
             'INDICATOR': INDICATOR,
-            'INV': INV,
+            'INTERVENTION_LIMIT': INTERVENTION_LIMIT,
             'PRODUCT_PROCESS': PRODUCT_PROCESS,
-            'ENV_COST_PROCESS': ENV_COST_PROCESS,
-            'INV_PROCESS': INV_PROCESS,
+            'INTERVENTION_PROCESS': INTERVENTION_PROCESS,
+            'INTERVENTION_LIMIT_PROCESS': INTERVENTION_LIMIT_PROCESS,
             'TECH_MATRIX': technology_matrix_dict,
-            'ENV_COST_MATRIX': env_cost_dict,
-            'INV_MATRIX': inv_dict,
+            'INTERVENTION_MATRIX': intervention_dict,
+            'INTERVENTION_LIMIT_MATRIX': intervention_limit_dict,
             'FINAL_DEMAND': demand_dict,
             'SUPPLY': supply_dict,
             'LOWER_LIMIT': lower_limit_dict,
             'UPPER_LIMIT': upper_limit_dict,
-            'UPPER_INV_LIMIT': upper_inv_limit_dict,
+            'UPPER_INTERVENTION_LIMIT': upper_intervention_limit_dict,
             'UPPER_IMP_LIMIT': upper_imp_limit_dict,
             'WEIGHTS': weights,
         }
